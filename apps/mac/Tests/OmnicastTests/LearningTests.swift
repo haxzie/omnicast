@@ -478,3 +478,110 @@ final class ApplicationIndexTests: XCTestCase {
         }
     }
 }
+
+final class URLDetectorTests: XCTestCase {
+    func testPlainDomainsAreAddresses() {
+        XCTAssertEqual(URLDetector.url(from: "github.com")?.absoluteString, "https://github.com")
+        XCTAssertEqual(
+            URLDetector.url(from: "news.ycombinator.com/news")?.absoluteString,
+            "https://news.ycombinator.com/news")
+    }
+
+    func testSchemesAreHonoured() {
+        XCTAssertEqual(
+            URLDetector.url(from: "http://example.org")?.absoluteString, "http://example.org")
+        // Somebody else's scheme is not ours to open as a web page.
+        XCTAssertNil(URLDetector.url(from: "slack://channel?team=T1"))
+        XCTAssertNil(URLDetector.url(from: "file:///etc/hosts"))
+    }
+
+    func testLocalhostCountsEvenWithoutADot() {
+        XCTAssertEqual(
+            URLDetector.url(from: "localhost:3000")?.absoluteString, "http://localhost:3000")
+    }
+
+    func testFilenamesAreNotAddresses() {
+        // .md, .sh and .app are all real top-level domains, which is exactly
+        // why a naive "has a dot" check turns every filename into a URL —
+        // and inside a launcher these are overwhelmingly files and bundles.
+        XCTAssertNil(URLDetector.url(from: "readme.md"))
+        XCTAssertNil(URLDetector.url(from: "build.sh"))
+        XCTAssertNil(URLDetector.url(from: "Omnicast.app"))
+    }
+
+    func testCollidingDomainsStillWorkWithAPathOrScheme() {
+        // The escape hatches, for when you really do mean the website.
+        XCTAssertEqual(
+            URLDetector.url(from: "linear.app/pricing")?.absoluteString,
+            "https://linear.app/pricing")
+        XCTAssertEqual(
+            URLDetector.url(from: "https://omnicast.app")?.absoluteString, "https://omnicast.app")
+    }
+
+    func testOrdinaryQueriesAreNotAddresses() {
+        for query in ["safari", "clipboard history", "git", "", "1.5", "v2.0"] {
+            XCTAssertNil(URLDetector.url(from: query), "\(query) should not be a URL")
+        }
+    }
+
+    func testHostIgnoresWWWAndCase() {
+        let url = URL(string: "https://WWW.GitHub.com/haxzie")!
+        XCTAssertEqual(URLDetector.host(of: url), "github.com")
+    }
+}
+
+final class URLHistoryTests: XCTestCase {
+    private var directory: URL!
+    private var store: URLHistoryStore!
+
+    override func setUpWithError() throws {
+        directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("omnicast-urls-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        store = URLHistoryStore(directory: directory)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    func testVisitsAccumulateOnOneRowPerHost() {
+        store.record(URL(string: "https://github.com/haxzie")!)
+        store.record(URL(string: "https://github.com/anthropics")!)
+
+        let all = store.all()
+        XCTAssertEqual(all.count, 1, "paths should not each become their own suggestion")
+        XCTAssertEqual(all.first?.visits, 2)
+        XCTAssertEqual(all.first?.host, "github.com")
+    }
+
+    func testTypingAPrefixSuggestsAVisitedSite() async {
+        store.record(URL(string: "https://github.com")!)
+
+        let items = await URLProvider(store: store).items(for: "git")
+        XCTAssertEqual(items.first?.title, "github.com")
+        XCTAssertEqual(items.first?.kind, .website)
+    }
+
+    func testATypedAddressOutranksEverything() async {
+        let items = await URLProvider(store: store).items(for: "example.com")
+        XCTAssertEqual(items.first?.title, "example.com")
+        XCTAssertGreaterThan(items.first?.score ?? 0, 1_000)
+    }
+
+    func testTheSuggestionSharesTheLearnedIdentity() async {
+        // Same id whether typed in full or suggested, so opening it once
+        // teaches the prefix memory that "git" means this site.
+        store.record(URL(string: "https://github.com")!)
+        let typed = await URLProvider(store: store).items(for: "github.com")
+        let suggested = await URLProvider(store: store).items(for: "git")
+        XCTAssertEqual(typed.first?.id, suggested.first?.id)
+        XCTAssertEqual(typed.first?.id, URLProvider.itemID(forHost: "github.com"))
+    }
+
+    func testForgettingClearsEverything() {
+        store.record(URL(string: "https://example.com")!)
+        store.forgetAll()
+        XCTAssertTrue(store.all().isEmpty)
+    }
+}

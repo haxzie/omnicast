@@ -83,6 +83,16 @@ struct LauncherView: View {
                     .padding(.vertical, 4)
                     .background(
                         Capsule().fill(.white.opacity(0.1)))
+            } else if let browser = detectedURLBrowserIcon {
+                // The field turns into an address bar the moment what you have
+                // typed is one.
+                Image(nsImage: browser)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(width: 22, height: 22)
+                    .frame(width: 26)
+                    .transition(.opacity)
             } else {
                 Image(systemName: modeSymbol)
                     .font(.system(size: 18, weight: .light))
@@ -251,6 +261,12 @@ struct LauncherView: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, 18)
         .padding(.vertical, 10)
+    }
+
+    /// The default browser's icon, when the query is a web address.
+    private var detectedURLBrowserIcon: NSImage? {
+        guard !engine.mode.isBrowser, URLDetector.url(from: engine.query) != nil else { return nil }
+        return DefaultBrowser.icon
     }
 
     private var modeSymbol: String {

@@ -65,6 +65,10 @@ final class ApplicationProvider: SearchProvider, @unchecked Sendable {
 
     func items(for query: String) async -> [SearchItem] {
         let snapshot = lock.withLock { entries }
+        // "Omnicast.app" should find Omnicast: the extension is part of how
+        // people refer to a bundle, but never part of its name.
+        let query =
+            query.lowercased().hasSuffix(".app") ? String(query.dropLast(4)) : query
 
         // An empty query is the zero state: hand back every app and let the
         // ranker keep only the ones it can predict from.

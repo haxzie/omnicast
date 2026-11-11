@@ -13,6 +13,7 @@ final class Settings: ObservableObject {
     @Published var clipboardHistoryEnabled: Bool { didSet { defaults.set(clipboardHistoryEnabled, forKey: "clipboardHistoryEnabled") } }
     @Published var clipboardRetentionDays: Int { didSet { defaults.set(clipboardRetentionDays, forKey: "clipboardRetentionDays") } }
     @Published var launchAtLogin: Bool { didSet { defaults.set(launchAtLogin, forKey: "launchAtLogin") } }
+    @Published var downloadFavicons: Bool { didSet { defaults.set(downloadFavicons, forKey: "downloadFavicons") } }
 
     @Published var selectedModelID: String? { didSet { defaults.set(selectedModelID, forKey: "selectedModelID") } }
     @Published var dictationLanguage: String { didSet { defaults.set(dictationLanguage, forKey: "dictationLanguage") } }
@@ -41,6 +42,7 @@ final class Settings: ObservableObject {
         clipboardHistoryEnabled = defaults.object(forKey: "clipboardHistoryEnabled") as? Bool ?? true
         clipboardRetentionDays = defaults.object(forKey: "clipboardRetentionDays") as? Int ?? 30
         launchAtLogin = defaults.object(forKey: "launchAtLogin") as? Bool ?? false
+        downloadFavicons = defaults.object(forKey: "downloadFavicons") as? Bool ?? true
 
         selectedModelID = defaults.string(forKey: "selectedModelID")
         dictationLanguage = defaults.string(forKey: "dictationLanguage") ?? "auto"

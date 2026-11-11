@@ -59,6 +59,17 @@ struct ResultRow: View {
                 .resizable()
                 .interpolation(.high)
                 .scaledToFit()
+        case .image(let url):
+            if let image = NSImage(contentsOf: url) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+            } else {
+                Image(systemName: "globe")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 

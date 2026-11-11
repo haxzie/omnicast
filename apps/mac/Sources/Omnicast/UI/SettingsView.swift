@@ -30,8 +30,19 @@ struct SettingsView: View {
                         Spacer()
                         Button("Rebuild now") { environment.searchEngine.reindexApplications() }
                     }
-                    Text("The launcher searches installed applications only.")
+                    Text("The launcher searches installed applications, Finder locations, and web addresses you have opened.")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
+                    Divider().opacity(0.4)
+                    Toggle("Download site icons", isOn: $settings.downloadFavicons)
+                    Text(
+                        "Fetches a favicon from Google for sites you open, so suggestions look like the sites they point at. This is the only request Omnicast makes to a third party, and it tells Google the domain. Turn it off and suggestions use a globe."
+                    )
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    HStack {
+                        Text("Website history")
+                        Spacer()
+                        Button("Forget all") { URLHistoryStore.shared.forgetAll() }
+                    }
                     Divider().opacity(0.4)
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {

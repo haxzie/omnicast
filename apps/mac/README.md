@@ -48,6 +48,10 @@ Points worth knowing before changing things:
   decay and scoring maths; `UsageStore` persists it to SQLite and logs each decision;
   `LearningReplay` scores the model against that log. Keeping the maths free of I/O is what makes
   a weight change measurable rather than a matter of taste.
+- **A URL detector cannot just look for a dot.** `.app`, `.sh`, `.md`, `.py` and `.js` are all real
+  top-level domains, so `Omnicast.app` and `build.sh` parse as perfectly good hosts. `URLDetector`
+  requires a curated TLD for a bare host and excludes the ones that collide with filenames, which
+  a path or an explicit scheme overrides. The tests are the specification here.
 - **Finder is not in `/Applications` either.** It lives in `/System/Library/CoreServices`, next to
   110-odd internal agents nobody launches. Filtering those out by `LSUIElement`/`LSBackgroundOnly`
   does not work — Finder sets neither, and plenty of legitimate menu-bar apps set both (Omnicast

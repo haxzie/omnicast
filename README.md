@@ -14,7 +14,7 @@ macOS 14+ · Apple silicon · SwiftUI · no third-party Swift dependencies
 
 Omnicast is two things that belong on the same keystroke:
 
-- **A launcher that does one job properly.** Every installed application — Finder included — matched fuzzily and ranked by what you actually open, plus quick links to the Trash, Applications, Downloads and the rest. No file crawling, no web results, no noise.
+- **A launcher that does one job properly.** Every installed application — Finder included — matched fuzzily and ranked by what you actually open, plus quick links to the Trash, Applications, Downloads and the rest. Type a web address and it opens in your browser; type a few letters of one you have opened before and it comes back with its icon. No file crawling, no scraping, no noise.
 - **Dictation that runs on your machine.** Hold the 🌐 fn key, talk, let go. The transcript lands at your cursor. Audio never leaves the device, and there is no account.
 
 Alongside those, a searchable clipboard history and a record of everything you have ever dictated, both browsable from the launcher itself.
@@ -70,6 +70,14 @@ Type `clip` or `rec` in the launcher and the two browsers come up. Each is a lis
 
 Clipboard entries copied from a password manager are never recorded — Omnicast skips anything the source marks concealed or transient.
 
+### Web addresses
+
+Type anything that looks like an address and the search icon becomes your default browser's — Return opens it there. Omnicast remembers the host, so typing `git` later brings back `github.com` with its favicon, ranked by the same prefix memory that learns your applications: open it once from `git`, and `git` means GitHub from then on.
+
+Filenames are deliberately not addresses. `.app`, `.sh` and `.md` are all real top-level domains, so a naive check turns `Omnicast.app` and `build.sh` into websites — inside a launcher those are a bundle and a script. Add a path or a scheme (`linear.app/pricing`, `https://linear.app`) when you do mean the site.
+
+> **The one request to a third party.** Site icons come from Google's favicon service, which means Google learns the domain. It only runs for a site you just chose to open, and Settings › Search can turn it off — suggestions then use a globe. Settings also has a Forget all for website history.
+
 ### Ranking that learns
 
 Picking an app records it against **every prefix of what you typed** — `t`, `te`, `ter`, `term` — so two keystrokes next time already carry the evidence of the whole word. Type `s` for a week and Safari is simply first, even against apps that score higher on the raw match.
@@ -121,9 +129,10 @@ Everything is local-first and lives in `~/Library/Application Support/Omnicast/`
 | `clipboard.sqlite` | clipboard history |
 | `dictation.sqlite` | transcripts |
 | `usage.sqlite` | what the ranker has learned, plus its decision log |
+| `urls.sqlite` + `Favicons/` | web addresses you have opened, and their icons |
 | `Models/` | downloaded speech models |
 
-No account, no telemetry, nothing uploaded. Sync is **off by default**; turning it on in Settings pushes transcript text and timings to a Worker that you deploy and own. Settings has a Reset for the learned ranking.
+No account, no telemetry, nothing uploaded — the sole exception being favicon lookups, described above and switchable off. Sync is **off by default**; turning it on in Settings pushes transcript text and timings to a Worker that you deploy and own. Settings has a Reset for the learned ranking.
 
 ## Repository layout
 
