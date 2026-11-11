@@ -416,3 +416,65 @@ final class BackspaceNavigationTests: XCTestCase {
         XCTAssertFalse(SearchEngine.backspaceExits(query: "saf", mode: .applications))
     }
 }
+
+final class QuickLinkTests: XCTestCase {
+    func testTrashAndApplicationsAreReachable() async {
+        let items = await QuickLinkProvider().items(for: "trash")
+        XCTAssertEqual(items.first?.title, "Trash")
+        XCTAssertEqual(items.first?.kind, .folder)
+
+        let apps = await QuickLinkProvider().items(for: "applications")
+        XCTAssertEqual(apps.first?.title, "Applications")
+        XCTAssertEqual(apps.first?.action, .openURL(URL(fileURLWithPath: "/Applications")))
+    }
+
+    func testKeywordsReachThemToo() async {
+        let bin = await QuickLinkProvider().items(for: "bin")
+        XCTAssertTrue(bin.contains { $0.title == "Trash" })
+
+        let photos = await QuickLinkProvider().items(for: "photos")
+        XCTAssertTrue(photos.contains { $0.title == "Pictures" })
+    }
+
+    func testEveryOfferedLinkActuallyExists() async {
+        // A link to somewhere this Mac does not have is worse than no link.
+        for item in await QuickLinkProvider().items(for: "") {
+            guard case .openURL(let url) = item.action else { continue }
+            XCTAssertTrue(
+                FileManager.default.fileExists(atPath: url.path),
+                "\(item.title) points at \(url.path), which is not there")
+        }
+    }
+
+    func testFoldersNeverOutweighApplications() async {
+        // "music" must land on Music.app, not the Music folder.
+        let provider = ApplicationProvider()
+        await provider.prepare()
+
+        let links = await QuickLinkProvider().items(for: "")
+        let apps = await provider.items(for: "")
+        XCTAssertFalse(links.isEmpty)
+        XCTAssertFalse(apps.isEmpty)
+        XCTAssertLessThan(links[0].weight, apps[0].weight)
+    }
+}
+
+final class ApplicationIndexTests: XCTestCase {
+    /// Finder lives in /System/Library/CoreServices, which is otherwise full
+    /// of internal agents — it was missing from the index entirely.
+    func testFinderIsIndexed() async {
+        let provider = ApplicationProvider()
+        await provider.prepare()
+        let items = await provider.items(for: "finder")
+        XCTAssertEqual(items.first?.title, "Finder")
+    }
+
+    func testTheUsualApplicationsAreIndexed() async {
+        let provider = ApplicationProvider()
+        await provider.prepare()
+        for name in ["Safari", "Mail", "Terminal"] {
+            let items = await provider.items(for: name)
+            XCTAssertEqual(items.first?.title, name, "\(name) should be the top hit for its name")
+        }
+    }
+}

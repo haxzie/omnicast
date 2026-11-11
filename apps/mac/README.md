@@ -48,6 +48,10 @@ Points worth knowing before changing things:
   decay and scoring maths; `UsageStore` persists it to SQLite and logs each decision;
   `LearningReplay` scores the model against that log. Keeping the maths free of I/O is what makes
   a weight change measurable rather than a matter of taste.
+- **Finder is not in `/Applications` either.** It lives in `/System/Library/CoreServices`, next to
+  110-odd internal agents nobody launches. Filtering those out by `LSUIElement`/`LSBackgroundOnly`
+  does not work — Finder sets neither, and plenty of legitimate menu-bar apps set both (Omnicast
+  included) — so `ApplicationProvider` names the handful worth listing outright.
 - **Safari is not in `/Applications`.** It ships in a sealed cryptex volume with only a symlink
   left behind, and directory enumeration does not follow symlinks — hence the extra search root in
   `ApplicationProvider`. Without it the launcher cannot find Safari at all.

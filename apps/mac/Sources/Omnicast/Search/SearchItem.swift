@@ -19,13 +19,15 @@ enum ResultDetail: Hashable {
 }
 
 enum SearchItemKind: String, Hashable {
-    /// Search covers installed applications. Clipboard entries and past
-    /// dictations are only ever listed by their own browsing modes.
-    case application, clipboard, dictation
+    /// Search covers installed applications and a few Finder locations.
+    /// Clipboard entries and past dictations are only ever listed by their
+    /// own browsing modes.
+    case application, folder, clipboard, dictation
 
     var label: String {
         switch self {
         case .application: return "App"
+        case .folder: return "Folder"
         case .clipboard: return "Clipboard"
         case .dictation: return "Dictation"
         }
@@ -34,6 +36,7 @@ enum SearchItemKind: String, Hashable {
     var symbolName: String {
         switch self {
         case .application: return "app.dashed"
+        case .folder: return "folder"
         case .clipboard: return "doc.on.clipboard"
         case .dictation: return "waveform"
         }
@@ -44,6 +47,9 @@ struct SearchItem: Identifiable, Hashable {
     enum Icon: Hashable {
         case file(URL)
         case symbol(String)
+        /// An AppKit named image, for the few system icons that cannot be
+        /// read off a path — the Trash being hidden, for one.
+        case named(String)
     }
 
     let id: String

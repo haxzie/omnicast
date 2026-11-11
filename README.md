@@ -14,7 +14,7 @@ macOS 14+ · Apple silicon · SwiftUI · no third-party Swift dependencies
 
 Omnicast is two things that belong on the same keystroke:
 
-- **A launcher that does one job properly.** Every installed application, matched fuzzily and ranked by what you actually open. No files, no web results, no noise — just the app you meant, first.
+- **A launcher that does one job properly.** Every installed application — Finder included — matched fuzzily and ranked by what you actually open, plus quick links to the Trash, Applications, Downloads and the rest. No file crawling, no web results, no noise.
 - **Dictation that runs on your machine.** Hold the 🌐 fn key, talk, let go. The transcript lands at your cursor. Audio never leaves the device, and there is no account.
 
 Alongside those, a searchable clipboard history and a record of everything you have ever dictated, both browsable from the launcher itself.

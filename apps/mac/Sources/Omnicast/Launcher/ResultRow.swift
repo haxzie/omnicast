@@ -54,6 +54,11 @@ struct ResultRow: View {
             Image(systemName: name)
                 .font(.system(size: 15, weight: .regular))
                 .foregroundStyle(.primary.opacity(0.85))
+        case .named(let name):
+            Image(nsImage: NSImage(named: name) ?? NSImage())
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
         }
     }
 

@@ -25,6 +25,21 @@ final class ApplicationProvider: SearchProvider, @unchecked Sendable {
     private static let cryptexApplications =
         "/System/Volumes/Preboot/Cryptexes/App/System/Applications"
 
+    /// `/System/Library/CoreServices` holds Finder — and 110-odd internal
+    /// agents nobody launches. Filtering by LSUIElement does not separate
+    /// them (Finder sets neither flag, and plenty of legitimate menu-bar apps
+    /// set both), so the handful worth listing are named outright.
+    private static let coreServicesApplications = [
+        "Finder", "Installer", "Screen Sharing", "Certificate Assistant",
+        "Apple Diagnostics", "Erase Assistant", "Screen Time",
+    ]
+
+    private static var extraApplications: [URL] {
+        coreServicesApplications
+            .map { URL(fileURLWithPath: "/System/Library/CoreServices/\($0).app") }
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
     private static let searchRoots: [URL] = {
         var roots = [
             URL(fileURLWithPath: "/Applications"),
@@ -100,6 +115,18 @@ final class ApplicationProvider: SearchProvider, @unchecked Sendable {
         let manager = FileManager.default
         var seen = Set<String>()
         var found: [Entry] = []
+
+        for url in extraApplications {
+            guard seen.insert(url.path).inserted, let bundle = Bundle(url: url) else { continue }
+            let name =
+                (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
+                ?? (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String)
+                ?? url.deletingPathExtension().lastPathComponent
+            found.append(
+                Entry(
+                    url: url, name: name, bundleID: bundle.bundleIdentifier ?? "",
+                    acronym: acronym(of: name)))
+        }
 
         for root in searchRoots {
             guard

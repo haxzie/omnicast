@@ -178,7 +178,8 @@ final class SearchEngine: ObservableObject {
 
     private func providers(for mode: Mode) -> [SearchProvider] {
         switch mode {
-        case .applications: return [applicationProvider, PaneProvider()]
+        case .applications:
+            return [applicationProvider, PaneProvider(), QuickLinkProvider()]
         case .clipboard: return [ClipboardProvider(browsing: true)]
         case .dictation: return [DictationProvider(browsing: true)]
         }
