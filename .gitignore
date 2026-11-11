@@ -1,0 +1,22 @@
+node_modules/
+.pnpm-store/
+dist/
+build/
+.next/
+out/
+.turbo/
+.wrangler/
+.dev.vars
+*.tsbuildinfo
+.env
+.env.local
+.DS_Store
+
+# Swift / Xcode
+apps/mac/.build/
+apps/mac/.swiftpm/
+apps/mac/build.noindex/
+apps/mac/Resources/Omnicast.preview.png
+apps/mac/Omnicast.app/
+DerivedData/
+*.xcuserstate

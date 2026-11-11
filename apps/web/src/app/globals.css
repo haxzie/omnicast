@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #05060a;
+  --color-ink-soft: #0b0d14;
+  --color-haze: #8b93a7;
+  --color-accent: #6e8dff;
+  --color-accent-warm: #ff7a59;
+  --font-sans: ui-sans-serif, -apple-system, "SF Pro Text", "Inter", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", monospace;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+  body {
+    background:
+      radial-gradient(60rem 40rem at 15% -10%, rgba(110, 141, 255, 0.28), transparent 60%),
+      radial-gradient(45rem 35rem at 85% 0%, rgba(255, 122, 89, 0.18), transparent 55%),
+      radial-gradient(50rem 50rem at 50% 110%, rgba(93, 226, 199, 0.14), transparent 60%),
+      var(--color-ink);
+    color: #eef1f8;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+@utility glass {
+  background: color-mix(in oklab, white 7%, transparent);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid color-mix(in oklab, white 12%, transparent);
+  box-shadow:
+    0 1px 0 0 color-mix(in oklab, white 14%, transparent) inset,
+    0 24px 60px -24px rgba(0, 0, 0, 0.75);
+}
+
+@utility glass-soft {
+  background: color-mix(in oklab, white 4%, transparent);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  border: 1px solid color-mix(in oklab, white 8%, transparent);
+}

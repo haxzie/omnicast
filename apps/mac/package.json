@@ -1,0 +1,11 @@
+{
+  "name": "@omnicast/mac",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "./scripts/build.sh",
+    "dev": "./scripts/run.sh",
+    "test": "swift test",
+    "typecheck": "swift build"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "@omnicast/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "wrangler d1 migrations apply omnicast --local",
+    "db:migrate": "wrangler d1 migrations apply omnicast --remote",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@hono/zod-validator": "^0.7.4",
+    "@omnicast/shared": "workspace:*",
+    "drizzle-orm": "^0.44.7",
+    "hono": "^4.10.3",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261110.1",
+    "drizzle-kit": "^0.31.6",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.48.0"
+  }
+}
