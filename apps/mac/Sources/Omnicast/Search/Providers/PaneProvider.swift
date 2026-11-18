@@ -9,18 +9,21 @@ final class PaneProvider: SearchProvider, @unchecked Sendable {
         let mode: SearchEngine.Mode
         let title: String
         let subtitle: String
-        let symbol: String
+        let icon: BuiltInIcon
+        let compactTitle: String
         let keywords: String
     }
 
     private static let panes = [
         Pane(
             mode: .clipboard, title: "Clipboard History",
-            subtitle: "Browse everything you have copied", symbol: "doc.on.clipboard",
+            subtitle: "Browse everything you have copied", icon: .clipboard,
+            compactTitle: "Clipboard",
             keywords: "clipboard history paste copy clips pasteboard"),
         Pane(
             mode: .dictation, title: "Recordings",
-            subtitle: "Browse your dictation transcripts", symbol: "waveform",
+            subtitle: "Browse your dictation transcripts", icon: .recordings,
+            compactTitle: "Recordings",
             keywords: "recordings dictation transcripts voice speech notes"),
     ]
 
@@ -40,13 +43,14 @@ final class PaneProvider: SearchProvider, @unchecked Sendable {
                 title: pane.title,
                 subtitle: pane.subtitle,
                 kind: pane.mode == .clipboard ? .clipboard : .dictation,
-                icon: .symbol(pane.symbol),
+                icon: .builtIn(pane.icon),
                 action: .openPane(pane.mode),
                 // Just above applications: a two-word query for one of these
                 // should not lose to an app that happens to fuzzy-match.
                 weight: 1.4,
                 score: match.score,
-                titleMatch: match.indices)
+                titleMatch: match.indices,
+                compactTitle: pane.compactTitle)
         }
     }
 }

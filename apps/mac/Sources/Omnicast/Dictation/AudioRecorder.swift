@@ -24,6 +24,10 @@ final class AudioRecorder: ObservableObject {
     /// 0...1, smoothed, for the waveform.
     @Published private(set) var level: Double = 0
 
+    /// The converted samples, kept so a live pass can transcribe what has
+    /// been said so far without touching the file still being written.
+    let buffer = PCMBuffer()
+
     private let engine = AVAudioEngine()
     private var file: AVAudioFile?
     private var converter: AVAudioConverter?
@@ -60,6 +64,7 @@ final class AudioRecorder: ObservableObject {
                 interleaved: true)
         else { throw RecorderError.engineUnavailable("unsupported target format") }
 
+        buffer.removeAll()
         file = try AVAudioFile(
             forWriting: url, settings: targetFormat.settings, commonFormat: .pcmFormatInt16,
             interleaved: true)
@@ -134,6 +139,9 @@ final class AudioRecorder: ObservableObject {
             }
             guard error == nil, output.frameLength > 0 else { return }
             try? file.write(from: output)
+            if let channel = output.int16ChannelData?[0] {
+                self.buffer.append(channel, count: Int(output.frameLength))
+            }
         }
     }
 

@@ -44,6 +44,36 @@ final class WhisperOutputTests: XCTestCase {
             WhisperCLITranscriber.clean(" [BLANK_AUDIO] Ship the   glass panel. "),
             "Ship the glass panel.")
     }
+
+    /// The markers whisper actually emits are not all shouted in capitals.
+    func testStripsLowercaseAndMixedCaseMarkers() {
+        for marker in ["[pause]", "[silence]", "[Silence]", "[ pause ]", "[inaudible]"] {
+            XCTAssertEqual(
+                WhisperCLITranscriber.clean("Ship it \(marker) today"),
+                "Ship it today",
+                "failed to strip \(marker)")
+        }
+    }
+
+    func testStripsParentheticalAndMusicMarkers() {
+        XCTAssertEqual(
+            WhisperCLITranscriber.clean("(dramatic music) Ship it ♪"), "Ship it")
+        XCTAssertEqual(
+            WhisperCLITranscriber.clean("Ship it *laughs* today"), "Ship it today")
+    }
+
+    /// A marker sitting in front of punctuation should not leave a gap behind.
+    func testDoesNotLeaveSpaceBeforePunctuation() {
+        XCTAssertEqual(
+            WhisperCLITranscriber.clean("Ship the panel [pause], then rest [silence]."),
+            "Ship the panel, then rest.")
+    }
+
+    func testKeepsOrdinarySpeech() {
+        XCTAssertEqual(
+            WhisperCLITranscriber.clean("Ship the glass panel, then rest."),
+            "Ship the glass panel, then rest.")
+    }
 }
 
 final class ApplicationPathTests: XCTestCase {

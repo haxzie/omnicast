@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 
 /// What pressing Return on a result does.
 enum SearchAction: Hashable {
@@ -54,6 +55,9 @@ struct SearchItem: Identifiable, Hashable {
         case named(String)
         /// An image file on disk, such as a downloaded favicon.
         case image(URL)
+        /// A drawn app icon for the launcher's own browsers, so they sit on
+        /// the quick-launch row as equals to real applications.
+        case builtIn(BuiltInIcon)
     }
 
     let id: String
@@ -73,8 +77,16 @@ struct SearchItem: Identifiable, Hashable {
     var aliases: [String] = []
     /// Heading this row is grouped under, when browsing.
     var section: String?
+    /// A shorter name for the quick-launch row, where a tile is 84pt wide.
+    var compactTitle: String?
     /// Everything the detail pane needs; nil for plain results.
     var detail: ResultDetail?
+
+    /// True for the two browsers built into the launcher.
+    var isLauncherPane: Bool {
+        if case .openPane = action { return true }
+        return false
+    }
 
     static func == (lhs: SearchItem, rhs: SearchItem) -> Bool { lhs.id == rhs.id }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
@@ -91,4 +103,33 @@ protocol SearchProvider: Sendable {
 
 extension SearchProvider {
     func prepare() async {}
+}
+
+/// The launcher's own "apps", drawn rather than shipped: a full-bleed squircle
+/// on Apple's corner curve with a white glyph, so they read as macOS icons at
+/// any size without an asset catalogue.
+enum BuiltInIcon: String, Hashable {
+    case clipboard
+    case recordings
+
+    var symbol: String {
+        switch self {
+        case .clipboard: return "doc.on.clipboard.fill"
+        case .recordings: return "waveform"
+        }
+    }
+
+    /// Top-to-bottom gradient, deep enough that a white glyph carries.
+    var colors: [Color] {
+        switch self {
+        case .clipboard:
+            return [Color(red: 0.26, green: 0.26, blue: 0.29), Color(red: 0.11, green: 0.11, blue: 0.13)]
+        case .recordings:
+            return [Color(red: 0.45, green: 0.33, blue: 1.0), Color(red: 0.23, green: 0.17, blue: 0.65)]
+        }
+    }
+
+    /// Apple's squircle is 0.2237 of the side; a plain circular corner at this
+    /// size reads as subtly wrong beside real icons.
+    static let cornerRatio = 0.2237
 }

@@ -37,6 +37,10 @@ extension View {
 }
 
 private struct GlassPanelModifier: ViewModifier {
+    /// Enough to keep white text legible over a white backdrop, little enough
+    /// that the panel still reads as glass.
+    static let scrimOpacity = 0.42
+
     let cornerRadius: CGFloat
     let material: NSVisualEffectView.Material
 
@@ -45,11 +49,19 @@ private struct GlassPanelModifier: ViewModifier {
         return
             content
             .background {
-                if #available(macOS 26.0, *) {
-                    // Liquid Glass: refracts and reacts to what's behind the window.
-                    shape.fill(.clear).glassEffect(.regular, in: shape)
-                } else {
-                    VisualEffectBackground(material: material)
+                ZStack {
+                    if #available(macOS 26.0, *) {
+                        // Liquid Glass: refracts and reacts to what's behind the window.
+                        shape.fill(.clear).glassEffect(.regular, in: shape)
+                    } else {
+                        VisualEffectBackground(material: material)
+                    }
+                    // Both materials sample whatever is behind the window, so
+                    // over a white one the panel turns pale while the text
+                    // stays white and the whole thing becomes unreadable. The
+                    // scrim bounds how light it can get, and still lets plenty
+                    // of the desktop through.
+                    shape.fill(.black.opacity(Self.scrimOpacity))
                 }
             }
             .clipShape(shape)
@@ -77,7 +89,7 @@ struct GlassCard<Content: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background {
                 if #available(macOS 26.0, *) {
-                    shape.fill(.clear).glassEffect(.regular.tint(.white.opacity(0.03)), in: shape)
+                    shape.fill(.clear).glassEffect(.regular.tint(.black.opacity(0.25)), in: shape)
                 } else {
                     shape.fill(.white.opacity(0.06))
                 }

@@ -13,7 +13,8 @@ APP="build.noindex/Omnicast.app"
 echo "▸ swift build -c $CONFIG"
 swift build -c "$CONFIG"
 
-BINARY="$(swift build -c "$CONFIG" --show-bin-path)/Omnicast"
+BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
+BINARY="$BIN_DIR/Omnicast"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -29,6 +30,28 @@ AIR="$(mktemp -t omnicast-shader).air"
 xcrun -sdk macosx metal -O3 -c Sources/Omnicast/UI/SiriWave.metal -o "$AIR"
 xcrun -sdk macosx metallib "$AIR" -o "$APP/Contents/Resources/default.metallib"
 rm -f "$AIR"
+
+# VoiceGlowKit ships its shader as a raw .metal resource. SwiftPM copies the
+# file into the package's bundle verbatim — only Xcode's build system compiles
+# it — so `ShaderLibrary.bundle(.module)` would find no default.metallib and
+# the glow would draw nothing at all. Compile it into the bundle we ship.
+KIT_BUNDLE="$BIN_DIR/Libraries.dev_VoiceGlowKit.bundle"
+if [ -f "$KIT_BUNDLE/VoiceGlowShaders.metal" ]; then
+  echo "▸ metal (VoiceGlowKit)"
+  # Compile into the build-directory bundle first, then copy: `Bundle.module`
+  # can resolve to either that one or the copy inside the app, depending on
+  # how the binary is launched, and only one of them having the library is
+  # how you get a blank white rectangle instead of a glow.
+  KIT_AIR="$(mktemp -t voiceglow).air"
+  xcrun -sdk macosx metal -O3 -c "$KIT_BUNDLE/VoiceGlowShaders.metal" -o "$KIT_AIR"
+  xcrun -sdk macosx metallib "$KIT_AIR" -o "$KIT_BUNDLE/default.metallib"
+  rm -f "$KIT_AIR"
+
+  rm -rf "$APP/Contents/Resources/$(basename "$KIT_BUNDLE")"
+  cp -R "$KIT_BUNDLE" "$APP/Contents/Resources/"
+else
+  echo "  warning: VoiceGlowShaders.metal not found; the glow will not draw."
+fi
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 # macOS identifies an app to TCC by its code signature, not its path or bundle

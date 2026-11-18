@@ -38,8 +38,6 @@ struct MainView: View {
         } detail: {
             Group {
                 switch environment.mainWindowTab {
-                case .dictation: DictationHistoryView()
-                case .clipboard: ClipboardHistoryView()
                 case .models: ModelsView()
                 case .settings: SettingsView()
                 }

@@ -4,6 +4,17 @@ import SwiftUI
 
 struct LauncherView: View {
     static let width: CGFloat = 720
+    /// How long the exit takes; the panel waits this out before ordering away.
+    static let exitDuration: TimeInterval = 0.16
+    /// Arriving overshoots very slightly, the way a sheet does.
+    private static let enter = Animation.spring(response: 0.3, dampingFraction: 0.78)
+    private static let exit = Animation.easeIn(duration: exitDuration)
+    /// The panel resizing as results come and go. A spring rather than a
+    /// curve because it is constantly interrupted by the next keystroke:
+    /// springs blend into their replacement, while an ease restarts from a
+    /// standstill and reads as a stutter.
+    private static let listChange = Animation.spring(response: 0.26, dampingFraction: 0.9)
+    private static let selectionMove = Animation.easeOut(duration: 0.11)
     /// Transparent margin around the glass so its drop shadow has somewhere to
     /// land — the window clips anything drawn outside its bounds.
     static let shadowInset: CGFloat = 52
@@ -14,9 +25,16 @@ struct LauncherView: View {
 
     @EnvironmentObject private var environment: AppEnvironment
     @FocusState private var fieldFocused: Bool
-    @State private var backspaceMonitor: Any?
+    @State private var keyMonitor: Any?
 
     private var engine: SearchEngine { environment.searchEngine }
+    private var presented: Bool { environment.isLauncherPresented }
+
+    /// With nothing typed, the launcher offers a row of what you open most
+    /// rather than a list of one-line results.
+    private var showsQuickLaunch: Bool {
+        engine.mode == .applications && engine.query.isEmpty && !engine.results.isEmpty
+    }
 
     /// Typing goes straight into the engine; there is no second copy of the
     /// query to drift out of sync with it.
@@ -32,6 +50,9 @@ struct LauncherView: View {
                 browser
                 Divider().opacity(0.35)
                 actionBar
+            } else if showsQuickLaunch {
+                Divider().opacity(0.35)
+                quickLaunchRow
             } else if !engine.results.isEmpty {
                 Divider().opacity(0.35)
                 resultList
@@ -44,11 +65,26 @@ struct LauncherView: View {
         .frame(width: Self.width)
         .glassPanel(cornerRadius: 22)
         .padding(Self.shadowInset)
+        // Grows down from the top edge so the search field stays where the eye
+        // already is, rather than the whole panel sliding into place.
+        .scaleEffect(presented ? 1 : 0.955, anchor: .top)
+        .offset(y: presented ? 0 : -10)
+        .opacity(presented ? 1 : 0)
+        .animation(presented ? Self.enter : Self.exit, value: presented)
         .onAppear {
-            fieldFocused = true
-            installBackspaceMonitor()
+            focusField()
+            installKeyMonitor()
         }
-        .onChange(of: engine.mode) { _, _ in fieldFocused = true }
+        // Every open, not just the first.
+        .onChange(of: environment.launcherPresentations) { _, _ in focusField() }
+        // And whenever the panel takes key back — after a click elsewhere, or
+        // a Space switch.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) {
+            notification in
+            guard notification.object is LauncherPanel else { return }
+            focusField()
+        }
+        .onChange(of: engine.mode) { _, _ in focusField() }
         // The panel resizes to its content so there's never empty glass.
         .background(
             GeometryReader { proxy in
@@ -67,7 +103,7 @@ struct LauncherView: View {
             if engine.mode.isBrowser {
                 Button {
                     engine.goBack()
-                    fieldFocused = true
+                    focusField()
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 12, weight: .semibold))
@@ -105,15 +141,24 @@ struct LauncherView: View {
                 .font(.system(size: engine.mode.isBrowser ? 15 : 22, weight: .light))
                 .focused($fieldFocused)
                 .onSubmit(activateSelection)
-                .onKeyPress(.downArrow) { engine.move(by: 1); return .handled }
-                .onKeyPress(.upArrow) { engine.move(by: -1); return .handled }
-                .onKeyPress(.escape) {
-                    if environment.dictation.isRecording {
-                        environment.dictation.cancel()
-                    } else if !engine.goBack() {
-                        // Already at the root, so esc dismisses.
-                        environment.hideLauncher()
-                    }
+                .onKeyPress(.downArrow) {
+                    guard !showsQuickLaunch else { return .handled }
+                    engine.move(by: 1)
+                    return .handled
+                }
+                .onKeyPress(.upArrow) {
+                    guard !showsQuickLaunch else { return .handled }
+                    engine.move(by: -1)
+                    return .handled
+                }
+                .onKeyPress(.rightArrow) {
+                    guard showsQuickLaunch else { return .ignored }
+                    engine.move(by: 1)
+                    return .handled
+                }
+                .onKeyPress(.leftArrow) {
+                    guard showsQuickLaunch else { return .ignored }
+                    engine.move(by: -1)
                     return .handled
                 }
                 .onKeyPress(.tab) { completeWithSelection(); return .handled }
@@ -145,6 +190,22 @@ struct LauncherView: View {
         }
         .padding(.horizontal, 18)
         .frame(height: 60)
+    }
+
+    private var quickLaunchRow: some View {
+        HStack(spacing: 2) {
+            ForEach(Array(engine.results.enumerated()), id: \.element.id) { index, item in
+                QuickLaunchTile(item: item, isSelected: index == engine.selectedIndex)
+                    .onTapGesture {
+                        engine.select(index: index)
+                        activateSelection()
+                    }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .animation(Self.selectionMove, value: engine.selectedIndex)
     }
 
     /// A list of entries beside a detail pane, Raycast style.
@@ -181,6 +242,7 @@ struct LauncherView: View {
                     }
                 }
                 .padding(6)
+                .animation(Self.selectionMove, value: engine.selectedIndex)
             }
             .onChange(of: engine.selectedIndex) { _, index in
                 guard engine.results.indices.contains(index) else { return }
@@ -223,11 +285,16 @@ struct LauncherView: View {
                     }
                 }
                 .padding(6)
+                .animation(Self.selectionMove, value: engine.selectedIndex)
             }
             .frame(
                 height: min(
                     CGFloat(engine.results.count) * Self.rowHeight + 12,
-                    CGFloat(Self.maxVisibleRows) * Self.rowHeight))
+                    CGFloat(Self.maxVisibleRows) * Self.rowHeight)
+            )
+            // Drives the window height through the size preference, so the
+            // panel resizes with the list instead of snapping ahead of it.
+            .animation(Self.listChange, value: engine.results.count)
             .onChange(of: engine.selectedIndex) { _, index in
                 guard engine.results.indices.contains(index) else { return }
                 withAnimation(.easeOut(duration: 0.1)) {
@@ -246,9 +313,6 @@ struct LauncherView: View {
             case .transcribing:
                 ProgressView().controlSize(.small)
                 Text("Transcribing with \(environment.models.activeModel?.name ?? environment.dictation.engineName)")
-            case .inserted(let value):
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                Text(value).lineLimit(1)
             case .failed(let message):
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                 Text(message).lineLimit(2)
@@ -279,21 +343,41 @@ struct LauncherView: View {
 
     // MARK: - Actions
 
-    /// Backspace is text input, so the focused field consumes it long before
-    /// `onKeyPress` runs. Catching it ahead of dispatch is the only way to get
-    /// "delete past the start of an empty filter steps back out".
-    private func installBackspaceMonitor() {
-        guard backspaceMonitor == nil else { return }
-        backspaceMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard event.keyCode == UInt16(kVK_Delete),
-                // Local monitors only see this app's events, and this is the
-                // only window the launcher ever keys — so a backspace typed
-                // anywhere else is never swallowed.
-                NSApp.keyWindow is LauncherPanel,
-                SearchEngine.backspaceExits(query: engine.query, mode: engine.mode)
-            else { return event }
-            engine.goBack()
-            return nil
+    /// Puts the caret in the search field. Deferred by a run-loop turn
+    /// because focus only sticks once the panel has actually become key,
+    /// which has not happened yet when `present()` returns.
+    private func focusField() {
+        DispatchQueue.main.async { fieldFocused = true }
+    }
+
+    /// Backspace and escape are both handled before the panel dispatches them.
+    /// A focused text field consumes backspace long before `onKeyPress` runs,
+    /// and escape has to work wherever focus happens to be — including after a
+    /// click on a result, when the field no longer holds it.
+    private func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Local monitors only see this app's events, and this is the only
+            // window the launcher ever keys — so a key pressed anywhere else
+            // is never swallowed.
+            guard NSApp.keyWindow is LauncherPanel else { return event }
+
+            switch Int(event.keyCode) {
+            case kVK_Escape:
+                if environment.dictation.isRecording {
+                    environment.dictation.cancel()
+                } else if !engine.goBack() {
+                    environment.hideLauncher()
+                }
+                return nil
+            case kVK_Delete:
+                guard SearchEngine.backspaceExits(query: engine.query, mode: engine.mode)
+                else { return event }
+                engine.goBack()
+                return nil
+            default:
+                return event
+            }
         }
     }
 

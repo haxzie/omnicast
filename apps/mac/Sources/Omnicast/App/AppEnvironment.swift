@@ -2,13 +2,13 @@ import AppKit
 import Combine
 import SwiftUI
 
+/// The window is for the things you set up once. Browsing clipboard history
+/// and past recordings belongs in the launcher, where you already are.
 enum MainWindowTab: String, Hashable, CaseIterable {
-    case dictation, clipboard, models, settings
+    case models, settings
 
     var title: String {
         switch self {
-        case .dictation: return "Dictation"
-        case .clipboard: return "Clipboard"
         case .models: return "Models"
         case .settings: return "Settings"
         }
@@ -16,8 +16,6 @@ enum MainWindowTab: String, Hashable, CaseIterable {
 
     var symbolName: String {
         switch self {
-        case .dictation: return "waveform"
-        case .clipboard: return "doc.on.clipboard"
         case .models: return "brain"
         case .settings: return "gearshape"
         }
@@ -36,13 +34,20 @@ final class AppEnvironment: ObservableObject {
     let models = ModelManager.shared
     let settings = Settings.shared
 
-    @Published var mainWindowTab: MainWindowTab = .dictation
+    @Published var mainWindowTab: MainWindowTab = .settings
+    /// Bumped on every open. The launcher's SwiftUI view appears once and is
+    /// reused for every presentation after that, so `onAppear` is not enough
+    /// to put the caret back in the field.
+    @Published private(set) var launcherPresentations = 0
+    /// Drives the launcher's own enter and exit animation.
+    @Published private(set) var isLauncherPresented = false
 
     private var launcher: LauncherPanel?
-    private var droplet: DropletPanel?
-    private let dropletModel = DropletModel()
+    private var transcript: TranscriptPanel?
+    private var aurora: AuroraPanel?
+    private let hudModel = DictationHUDModel()
     private var fnKeyMonitor: FnKeyMonitor?
-    private var dropletHideTask: Task<Void, Never>?
+    private var hudHideTask: Task<Void, Never>?
     private var hotKeyIDs: [UInt32] = []
     private var cancellables = Set<AnyCancellable>()
 
@@ -92,14 +97,45 @@ final class AppEnvironment: ObservableObject {
     func showLauncher(mode: SearchEngine.Mode = .applications) {
         let panel = launcher ?? makeLauncher()
         if mode == .applications {
-            searchEngine.goBack()
+            // `goBack` only searches when it actually leaves a browser. Coming
+            // back to a launcher that is already at the root — every ordinary
+            // open — it does nothing, so the results it was reset to empty
+            // would stay empty and the quick-launch row never appear.
+            if !searchEngine.goBack() {
+                searchEngine.search(searchEngine.query)
+            }
         } else {
             searchEngine.enter(mode)
         }
+        launcherPresentations += 1
+        // Order the window in while the content is still in its hidden state,
+        // then flip the flag — so the first frame drawn is the start of the
+        // animation rather than its end.
         panel.present()
+        isLauncherPresented = true
     }
 
+    /// Opening from the menu-bar menu, which needs to finish closing first.
+    ///
+    /// A panel presented while the menu is still tearing down wins key status
+    /// and then has it taken straight back off it, which the click-away check
+    /// reads as the user dismissing the launcher — so it opened and vanished
+    /// again. One beat later the menu is gone and this is an ordinary
+    /// presentation. `LauncherPanel.focusGrace` covers what slips through.
+    func showLauncherFromMenu(mode: SearchEngine.Mode = .applications) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.menuTeardown) { [weak self] in
+            self?.showLauncher(mode: mode)
+        }
+    }
+
+    /// Long enough for a menu-bar menu to close before the panel appears.
+    private static let menuTeardown: TimeInterval = 0.18
+
     func hideLauncher() {
+        guard isLauncherPresented else { return }
+        // Flipping this first lets the content animate out; the panel orders
+        // itself away once that finishes.
+        isLauncherPresented = false
         launcher?.dismiss()
     }
 
@@ -118,6 +154,7 @@ final class AppEnvironment: ObservableObject {
 
     private func makeLauncher() -> LauncherPanel {
         let panel = LauncherPanel()
+        panel.onDismissRequest = { [weak self] in self?.hideLauncher() }
         panel.contentView = NSHostingView(
             rootView: LauncherView().environmentObject(self))
         launcher = panel
@@ -171,53 +208,67 @@ final class AppEnvironment: ObservableObject {
     private func observeDictationPhase() {
         dictation.$phase
             .removeDuplicates()
-            .sink { [weak self] phase in self?.updateDroplet(for: phase) }
+            .sink { [weak self] phase in self?.updateHUD(for: phase) }
             .store(in: &cancellables)
 
         dictation.$level
-            .sink { [weak self] level in self?.dropletModel.level = level }
+            .sink { [weak self] level in self?.hudModel.level = level }
+            .store(in: &cancellables)
+
+        dictation.$liveText
+            .sink { [weak self] text in self?.hudModel.text = text }
             .store(in: &cancellables)
     }
 
-    private func updateDroplet(for phase: DictationController.Phase) {
-        dropletHideTask?.cancel()
+    private func updateHUD(for phase: DictationController.Phase) {
+        hudHideTask?.cancel()
 
         switch phase {
         case .idle:
             // Nothing to retract if the droplet was never shown — this fires
             // once on subscription with the controller's initial state.
-            guard dropletModel.phase != .hidden else { return }
+            guard hudModel.phase != .hidden else { return }
             // Let the drop retract into the top of the screen before the panel goes.
-            dropletModel.phase = .hidden
+            hudModel.phase = .hidden
             fnKeyMonitor?.resetGesture()
-            dropletHideTask = Task { [weak self] in
-                try? await Task.sleep(for: .milliseconds(450))
+            hudHideTask = Task { [weak self] in
+                // Just long enough for the fade; the text should be gone the
+                // moment it lands in the app, not linger afterwards.
+                try? await Task.sleep(
+                    for: .milliseconds(Int(LiveTranscriptView.appearanceDuration * 1000) + 40))
                 guard !Task.isCancelled else { return }
-                self?.droplet?.orderOut(nil)
+                self?.transcript?.orderOut(nil)
+                self?.aurora?.orderOut(nil)
             }
         case .recording:
-            showDroplet(.recording)
+            showHUD(.recording)
         case .transcribing:
-            showDroplet(.transcribing)
-        case .inserted:
-            showDroplet(.done)
+            showHUD(.transcribing)
         case .failed(let message):
-            showDroplet(.failed(message))
+            showHUD(.failed(message))
         }
     }
 
-    private func showDroplet(_ phase: DropletPhase) {
-        dropletHideTask?.cancel()
-        let panel = droplet ?? DropletPanel(model: dropletModel)
-        droplet = panel
-        if !panel.isVisible { panel.present() }
-        dropletModel.phase = phase
+    private func showHUD(_ phase: DictationHUDPhase) {
+        hudHideTask?.cancel()
+        // Presented back to front: both float at the same window level, so
+        // the last one in sits on top — glow first, then the words.
+        let glow = aurora ?? AuroraPanel(model: hudModel)
+        aurora = glow
+        if !glow.isVisible { glow.present() }
+
+        let panel = transcript ?? TranscriptPanel(model: hudModel)
+        transcript = panel
+        panel.present()
+
+        hudModel.phase = phase
     }
 
-    /// Drives the droplet with synthetic values. Used by `--show-droplet`.
-    func previewDroplet(_ phase: DropletPhase, level: Double) {
-        showDroplet(phase)
-        dropletModel.level = level
+    /// Drives the display with synthetic values. Used by `--show-hud`.
+    func previewHUD(_ phase: DictationHUDPhase, level: Double, text: String = "") {
+        showHUD(phase)
+        hudModel.level = level
+        hudModel.text = text
     }
 
     // MARK: - Hot keys

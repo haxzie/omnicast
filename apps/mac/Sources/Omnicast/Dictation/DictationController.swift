@@ -9,17 +9,20 @@ final class DictationController: ObservableObject {
         case idle
         case recording
         case transcribing
-        case inserted(String)
         case failed(String)
     }
 
     @Published private(set) var phase: Phase = .idle
-    @Published private(set) var history: [DictationEntry] = []
     @Published var level: Double = 0
+    /// What has been recognised so far, while you are still speaking.
+    @Published private(set) var liveText: String = ""
 
     private let recorder = AudioRecorder()
     private let store: DictationStore
     private let transcriber = CompositeTranscriber()
+    private let live = LiveTranscriber()
+    private var silence = SilenceDetector()
+    private var silenceWatcher: Task<Void, Never>?
     private var levelObserver: AnyCancellable?
     private var targetApp: NSRunningApplication?
     private var resetTask: Task<Void, Never>?
@@ -29,15 +32,9 @@ final class DictationController: ObservableObject {
 
     init(store: DictationStore = .shared) {
         self.store = store
-        levelObserver = recorder.$level.sink { [weak self] in self?.level = $0 }
-        reloadHistory()
-    }
-
-    func reloadHistory() {
-        let store = self.store
-        Task.detached(priority: .userInitiated) {
-            let items = store.recent()
-            await MainActor.run { self.history = items }
+        levelObserver = recorder.$level.sink { [weak self] level in
+            self?.level = level
+            self?.silence.observe(level: level)
         }
     }
 
@@ -56,8 +53,16 @@ final class DictationController: ObservableObject {
         // Remember who had focus so the transcript lands back in the right app.
         targetApp = NSWorkspace.shared.frontmostApplication
 
+        // Cleared before the engine starts, not after: `recorder.start()`
+        // awaits a permission check and the audio engine coming up, and the
+        // previous take's words would be on screen for all of it.
+        liveText = ""
+
         do {
             _ = try await recorder.start()
+            silence.reset()
+            startLiveTranscription()
+            startSilenceWatch()
             phase = .recording
             if Settings.shared.playDictationSounds { NSSound(named: "Tink")?.play() }
         } catch {
@@ -66,21 +71,70 @@ final class DictationController: ObservableObject {
         }
     }
 
+    /// Streams partial text into `liveText` while recording. Best effort: it
+    /// needs whisper.cpp and a downloaded model, and when either is missing
+    /// the display simply stays empty until the final transcript lands.
+    private func startLiveTranscription() {
+        let model = ModelManager.shared.activeModel
+        let language = Settings.shared.dictationLanguage
+        let buffer = recorder.buffer
+        Task { [live] in
+            await live.start(buffer: buffer, model: model, language: language) { text in
+                Task { @MainActor [weak self] in
+                    guard self?.isRecording == true else { return }
+                    self?.liveText = text
+                }
+            }
+        }
+    }
+
+    private func stopLiveTranscription() {
+        Task { [live] in await live.stop() }
+    }
+
+    /// Ends the recording once you stop talking, so a hands-free take does
+    /// not need a second keypress.
+    private func startSilenceWatch() {
+        silenceWatcher?.cancel()
+        silenceWatcher = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(200))
+                guard let self, !Task.isCancelled else { return }
+                guard Settings.shared.autoStopOnSilence, self.isRecording,
+                    self.silence.hasFallenSilent()
+                else { continue }
+                await self.stopAndTranscribe()
+                return
+            }
+        }
+    }
+
+    private func stopSilenceWatch() {
+        silenceWatcher?.cancel()
+        silenceWatcher = nil
+    }
+
     func cancel() {
         guard isRecording else { return }
+        stopLiveTranscription()
+        stopSilenceWatch()
         if let recording = recorder.stop() {
             try? FileManager.default.removeItem(at: recording.url)
         }
+        liveText = ""
         phase = .idle
     }
 
     func stopAndTranscribe() async {
         guard isRecording, let recording = recorder.stop() else { return }
+        stopLiveTranscription()
+        stopSilenceWatch()
         if Settings.shared.playDictationSounds { NSSound(named: "Pop")?.play() }
         defer { try? FileManager.default.removeItem(at: recording.url) }
 
         // Under ~0.35 s is almost always a mis-tap.
         guard recording.duration > 0.35 else {
+            liveText = ""
             phase = .idle
             return
         }
@@ -94,6 +148,7 @@ final class DictationController: ObservableObject {
                 audio: recording.url, model: model, language: language)
             let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else {
+                liveText = ""
                 phase = .idle
                 return
             }
@@ -111,34 +166,28 @@ final class DictationController: ObservableObject {
                 store.insert(entry)
                 await SyncClient.shared.pushPending()
             }
-            history.insert(entry, at: 0)
-
             if Settings.shared.autoPasteDictation {
                 targetApp?.activate()
                 TextInserter.paste(text)
             } else {
                 TextInserter.copy(text)
             }
-            phase = .inserted(text)
-            // Just long enough to register the checkmark before the droplet retracts.
-            scheduleReset(after: 0.8)
+            // Straight out: the text is in the app you were typing into, so
+            // leaving a copy floating over the screen is just something else
+            // to wait for.
+            liveText = ""
+            phase = .idle
         } catch {
             phase = .failed(error.localizedDescription)
             scheduleReset(after: 5)
         }
     }
 
-    func delete(_ entry: DictationEntry) {
-        store.delete(id: entry.id)
-        history.removeAll { $0.id == entry.id }
-    }
-
+    /// Settings offers this; the recordings themselves are browsed from the
+    /// launcher.
     func clearHistory() {
         store.deleteAll()
-        history = []
     }
-
-    func stats() -> DictationStore.Stats { store.stats() }
 
     private func scheduleReset(after seconds: Double) {
         resetTask?.cancel()

@@ -20,6 +20,7 @@ final class Settings: ObservableObject {
     @Published var fnKeyDictation: Bool { didSet { defaults.set(fnKeyDictation, forKey: "fnKeyDictation") } }
     @Published var autoPasteDictation: Bool { didSet { defaults.set(autoPasteDictation, forKey: "autoPasteDictation") } }
     @Published var playDictationSounds: Bool { didSet { defaults.set(playDictationSounds, forKey: "playDictationSounds") } }
+    @Published var autoStopOnSilence: Bool { didSet { defaults.set(autoStopOnSilence, forKey: "autoStopOnSilence") } }
 
     @Published var syncEnabled: Bool { didSet { defaults.set(syncEnabled, forKey: "syncEnabled") } }
     @Published var apiBaseURL: String { didSet { defaults.set(apiBaseURL, forKey: "apiBaseURL") } }
@@ -49,6 +50,7 @@ final class Settings: ObservableObject {
         fnKeyDictation = defaults.object(forKey: "fnKeyDictation") as? Bool ?? true
         autoPasteDictation = defaults.object(forKey: "autoPasteDictation") as? Bool ?? true
         playDictationSounds = defaults.object(forKey: "playDictationSounds") as? Bool ?? true
+        autoStopOnSilence = defaults.object(forKey: "autoStopOnSilence") as? Bool ?? true
 
         syncEnabled = defaults.object(forKey: "syncEnabled") as? Bool ?? false
         apiBaseURL = defaults.string(forKey: "apiBaseURL") ?? "http://127.0.0.1:8787"

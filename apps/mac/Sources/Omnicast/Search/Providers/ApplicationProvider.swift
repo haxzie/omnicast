@@ -40,6 +40,17 @@ final class ApplicationProvider: SearchProvider, @unchecked Sendable {
             .filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
+    /// The roots that actually change while the app is running. System
+    /// applications only move during an OS update, which restarts us anyway.
+    static var watchablePaths: [String] {
+        [
+            "/Applications",
+            "/Applications/Utilities",
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications")
+                .path,
+        ].filter { FileManager.default.fileExists(atPath: $0) }
+    }
+
     private static let searchRoots: [URL] = {
         var roots = [
             URL(fileURLWithPath: "/Applications"),
@@ -61,6 +72,9 @@ final class ApplicationProvider: SearchProvider, @unchecked Sendable {
     func reindex() async {
         let found = await Task.detached(priority: .utility) { Self.scan() }.value
         lock.withLock { entries = found }
+        // Rare enough to log, and the first thing worth knowing when someone
+        // reports that a newly installed app is missing.
+        NSLog("Omnicast: application index rebuilt, %d apps", found.count)
     }
 
     func items(for query: String) async -> [SearchItem] {

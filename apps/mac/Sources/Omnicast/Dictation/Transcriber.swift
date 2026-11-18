@@ -63,6 +63,15 @@ struct WhisperCLITranscriber: Transcriber {
     func transcribe(audio url: URL, model: SpeechModel?, language: String) async throws
         -> Transcription
     {
+        try await transcribe(audio: url, model: model, language: language, fast: false)
+    }
+
+    /// `fast` trades a little accuracy for latency — greedy decoding instead
+    /// of a beam search. Worth it for the live partials, which are replaced a
+    /// third of a second later anyway; the final transcript uses the default.
+    func transcribe(audio url: URL, model: SpeechModel?, language: String, fast: Bool) async throws
+        -> Transcription
+    {
         guard let binary = Self.binaryURL else {
             throw TranscriptionError.engineMissing(
                 "whisper.cpp was not found. Install it with `brew install whisper-cpp`, or point OMNICAST_WHISPER_BIN at your build."
@@ -83,6 +92,9 @@ struct WhisperCLITranscriber: Transcriber {
             "--no-prints",
             "--threads", String(max(2, ProcessInfo.processInfo.activeProcessorCount - 2)),
         ]
+        if fast {
+            process.arguments?.append(contentsOf: ["--beam-size", "1", "--best-of", "1"])
+        }
 
         let stdout = Pipe()
         let stderr = Pipe()
@@ -112,12 +124,23 @@ struct WhisperCLITranscriber: Transcriber {
             duration: Date().timeIntervalSince(started), engine: name)
     }
 
-    /// whisper.cpp emits `[BLANK_AUDIO]` and similar markers for silence.
+    /// whisper.cpp narrates what it hears but cannot transcribe —
+    /// `[BLANK_AUDIO]`, `[pause]`, `[silence]`, `(dramatic music)`, `♪` — and
+    /// those markers are not something anyone wants pasted into their editor.
+    ///
+    /// Brackets and parentheses are stripped whatever their case: the earlier
+    /// `[A-Z_ ]+` pattern caught `[BLANK_AUDIO]` but sailed straight past
+    /// `[pause]`. Nothing you can say out loud produces a bracket, so there is
+    /// no real text to lose here.
     static func clean(_ text: String) -> String {
         text
-            .replacingOccurrences(
-                of: "\\[[A-Z_ ]+\\]", with: "", options: .regularExpression)
-            .replacingOccurrences(of: "\\(.*?\\)", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "\\[[^\\]]*\\]", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "\\([^)]*\\)", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "\\*[^*]*\\*", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "[♪♫]", with: "", options: .regularExpression)
+            // Removing a marker mid-sentence leaves the space in front of the
+            // punctuation that followed it: "Ship it [pause], today".
+            .replacingOccurrences(of: "\\s+([,.!?;:])", with: "$1", options: .regularExpression)
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }

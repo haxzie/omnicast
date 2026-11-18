@@ -43,34 +43,8 @@ struct ResultRow: View {
         .contentShape(Rectangle())
     }
 
-    @ViewBuilder private var icon: some View {
-        switch item.icon {
-        case .file(let url):
-            Image(nsImage: IconCache.shared.icon(for: url))
-                .resizable()
-                .interpolation(.high)
-                .scaledToFit()
-        case .symbol(let name):
-            Image(systemName: name)
-                .font(.system(size: 15, weight: .regular))
-                .foregroundStyle(.primary.opacity(0.85))
-        case .named(let name):
-            Image(nsImage: NSImage(named: name) ?? NSImage())
-                .resizable()
-                .interpolation(.high)
-                .scaledToFit()
-        case .image(let url):
-            if let image = NSImage(contentsOf: url) {
-                Image(nsImage: image)
-                    .resizable()
-                    .interpolation(.high)
-                    .scaledToFit()
-            } else {
-                Image(systemName: "globe")
-                    .font(.system(size: 15))
-                    .foregroundStyle(.secondary)
-            }
-        }
+    private var icon: some View {
+        ItemIcon(icon: item.icon, symbolSize: 15)
     }
 
     /// Bolds the characters the query actually matched.
@@ -159,5 +133,95 @@ extension Array {
     /// Index that tolerates being out of bounds, for "is this a new section?".
     subscript(safe index: Int) -> Element? {
         indices.contains(index) ? self[index] : nil
+    }
+}
+
+/// Draws whichever kind of icon a result carries, so every surface that shows
+/// results renders them identically.
+struct ItemIcon: View {
+    let icon: SearchItem.Icon
+    var symbolSize: CGFloat = 15
+
+    var body: some View {
+        switch icon {
+        case .file(let url):
+            Image(nsImage: IconCache.shared.icon(for: url))
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+        case .symbol(let name):
+            Image(systemName: name)
+                .font(.system(size: symbolSize, weight: .regular))
+                .foregroundStyle(.primary.opacity(0.85))
+        case .named(let name):
+            Image(nsImage: NSImage(named: name) ?? NSImage())
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+        case .builtIn(let kind):
+            GeometryReader { proxy in
+                let side = min(proxy.size.width, proxy.size.height)
+                let shape = RoundedRectangle(
+                    cornerRadius: side * BuiltInIcon.cornerRatio, style: .continuous)
+                shape
+                    .fill(
+                        LinearGradient(
+                            colors: kind.colors, startPoint: .top, endPoint: .bottom)
+                    )
+                    .overlay {
+                        Image(systemName: kind.symbol)
+                            .font(.system(size: side * 0.46, weight: .medium))
+                            .foregroundStyle(.white)
+                    }
+                    .overlay {
+                        // The hairline every macOS icon has where its face
+                        // catches the light.
+                        shape.strokeBorder(.white.opacity(0.14), lineWidth: max(0.5, side * 0.02))
+                    }
+                    .frame(width: side, height: side)
+            }
+            .aspectRatio(1, contentMode: .fit)
+        case .image(let url):
+            if let image = NSImage(contentsOf: url) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+            } else {
+                Image(systemName: "globe")
+                    .font(.system(size: symbolSize))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// One square on the quick-launch row: icon above, name beneath.
+struct QuickLaunchTile: View {
+    let item: SearchItem
+    let isSelected: Bool
+
+    var body: some View {
+        VStack(spacing: 8) {
+            ItemIcon(icon: item.icon, symbolSize: 26)
+                .frame(width: 38, height: 38)
+            Text(item.compactTitle ?? item.title)
+                .font(.system(size: 11))
+                // One line, so every tile is the same height and the
+                // highlight sits evenly above and below its contents.
+                // Reserving a second line left a dead gap under short names.
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .foregroundStyle(isSelected ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+        }
+        .frame(width: 84)
+        .padding(.vertical, 12)
+        .background {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.white.opacity(0.14))
+            }
+        }
+        .contentShape(Rectangle())
     }
 }

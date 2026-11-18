@@ -1,3 +1,4 @@
+import AVFoundation
 import XCTest
 
 @testable import Omnicast
@@ -583,5 +584,338 @@ final class URLHistoryTests: XCTestCase {
         store.record(URL(string: "https://example.com")!)
         store.forgetAll()
         XCTAssertTrue(store.all().isEmpty)
+    }
+}
+
+final class DirectoryWatcherTests: XCTestCase {
+    private var directory: URL!
+
+    override func setUpWithError() throws {
+        directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("omnicast-watch-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    func testAnAppearingBundleTriggersARebuild() throws {
+        let fired = expectation(description: "watcher reported a change")
+        let watcher = DirectoryWatcher(paths: [directory.path], debounce: 0.2) { fired.fulfill() }
+        watcher.start()
+        defer { watcher.stop() }
+
+        // FSEvents needs a moment to arm before it will report anything.
+        Thread.sleep(forTimeInterval: 0.6)
+        try FileManager.default.createDirectory(
+            at: directory.appendingPathComponent("Example.app"), withIntermediateDirectories: true)
+
+        wait(for: [fired], timeout: 8)
+    }
+
+    func testABurstOfWritesRebuildsOnce() throws {
+        // Installing an app writes hundreds of files; one rebuild, not hundreds.
+        let fired = expectation(description: "watcher reported a change")
+        fired.assertForOverFulfill = false
+        var callbacks = 0
+        let watcher = DirectoryWatcher(paths: [directory.path], debounce: 0.4) {
+            callbacks += 1
+            fired.fulfill()
+        }
+        watcher.start()
+        defer { watcher.stop() }
+
+        Thread.sleep(forTimeInterval: 0.6)
+        for index in 0..<40 {
+            try Data("x".utf8).write(to: directory.appendingPathComponent("file\(index).txt"))
+        }
+
+        wait(for: [fired], timeout: 8)
+        Thread.sleep(forTimeInterval: 1.0)
+        XCTAssertEqual(callbacks, 1, "the burst should coalesce into a single rebuild")
+    }
+
+    func testMissingDirectoriesAreIgnored() {
+        // Not every Mac has ~/Applications.
+        let watcher = DirectoryWatcher(paths: ["/nope/does/not/exist"]) { XCTFail("no events") }
+        watcher.start()
+        watcher.stop()
+    }
+}
+
+final class WebsiteVisitTests: XCTestCase {
+    private func item(kind: SearchItemKind, action: SearchAction) -> SearchItem {
+        SearchItem(
+            id: "x", title: "t", subtitle: "s", kind: kind, icon: .symbol("globe"), action: action)
+    }
+
+    func testOpeningAWebsiteIsRemembered() {
+        let url = URL(string: "https://github.com")!
+        let remembered = ActionRunner.websiteToRemember(
+            item(kind: .website, action: .openURL(url)))
+        XCTAssertEqual(remembered, url)
+    }
+
+    func testOpeningAnApplicationIsNot() {
+        // Launching Safari must not land in the website history as a "visit".
+        let app = item(
+            kind: .application, action: .openURL(URL(fileURLWithPath: "/Applications/Safari.app")))
+        XCTAssertNil(ActionRunner.websiteToRemember(app))
+    }
+
+    func testNonOpeningActionsAreIgnored() {
+        XCTAssertNil(ActionRunner.websiteToRemember(item(kind: .website, action: .copyText("x"))))
+        XCTAssertNil(ActionRunner.websiteToRemember(item(kind: .folder, action: .openPane(.clipboard))))
+    }
+}
+
+final class QuickLaunchTests: XCTestCase {
+    private func app(_ name: String, score: Double) -> SearchItem {
+        SearchItem(
+            id: "app:\(name)", title: name, subtitle: "", kind: .application,
+            icon: .symbol("app.dashed"), action: .openURL(URL(fileURLWithPath: "/\(name)")),
+            score: score)
+    }
+
+    private func pane(_ mode: SearchEngine.Mode) -> SearchItem {
+        SearchItem(
+            id: "pane:\(mode.identifier)", title: mode.title, subtitle: "",
+            kind: mode == .clipboard ? .clipboard : .dictation, icon: .symbol("x"),
+            action: .openPane(mode))
+    }
+
+    /// Ranked order as the engine would hand it over: best first.
+    private var ranked: [SearchItem] {
+        [
+            app("Safari", score: 700), app("Terminal", score: 600),
+            pane(.clipboard), app("Slack", score: 500), app("Notes", score: 400),
+            app("Xcode", score: 300), app("Mail", score: 200), app("Music", score: 100),
+            pane(.dictation),
+        ]
+    }
+
+    func testTheRowIsSixApplicationsThenBothBrowsers() {
+        let row = SearchEngine.quickLaunch(from: ranked)
+
+        XCTAssertEqual(row.count, SearchEngine.quickLaunchApplications + 2)
+        XCTAssertEqual(
+            row.map(\.title),
+            [
+                "Safari", "Terminal", "Slack", "Notes", "Xcode", "Mail",
+                "Clipboard History", "Recordings",
+            ])
+    }
+
+    func testTheBrowsersAlwaysComeLastInAFixedOrder() {
+        // Wherever they land in the ranking, the two tiles stay put — the row
+        // is muscle memory, so it must not reshuffle as usage changes.
+        let reversed = SearchEngine.quickLaunch(from: ranked.reversed())
+        XCTAssertEqual(reversed.suffix(2).map(\.action), [.openPane(.clipboard), .openPane(.dictation)])
+    }
+
+    func testAFreshInstallStillOffersTheBrowsers() {
+        let row = SearchEngine.quickLaunch(from: [pane(.clipboard), pane(.dictation)])
+        XCTAssertEqual(row.map(\.title), ["Clipboard History", "Recordings"])
+    }
+
+    func testOnlyApplicationsFillTheApplicationSlots() {
+        // Folders and websites are learned too, but the row is for apps.
+        let folder = SearchItem(
+            id: "link:Trash", title: "Trash", subtitle: "", kind: .folder,
+            icon: .symbol("trash"), action: .openURL(URL(fileURLWithPath: "/t")), score: 999)
+        let row = SearchEngine.quickLaunch(from: [folder] + ranked)
+        XCTAssertFalse(row.contains { $0.kind == .folder })
+        XCTAssertEqual(
+            row.prefix(6).map(\.title),
+            ["Safari", "Terminal", "Slack", "Notes", "Xcode", "Mail"])
+    }
+}
+
+final class LauncherReopenTests: XCTestCase {
+    private var directory: URL!
+
+    override func setUpWithError() throws {
+        directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("omnicast-reopen-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    @MainActor
+    func testGoBackReportsWhetherItRanASearch() {
+        let engine = SearchEngine(usage: UsageStore(directory: directory))
+
+        // At the root there is nothing to go back to, so no search runs and
+        // the caller must refresh itself. Missing that left the quick-launch
+        // row empty on every open after the first: results had been reset,
+        // and nothing refilled them.
+        XCTAssertFalse(engine.goBack())
+
+        engine.enter(.clipboard)
+        XCTAssertTrue(engine.goBack(), "leaving a browser must re-run the root search")
+    }
+}
+
+final class PCMBufferTests: XCTestCase {
+    var directory: URL!
+
+    override func setUpWithError() throws {
+        directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("omnicast-pcm-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    private func append(_ buffer: PCMBuffer, frames: Int) {
+        var samples = (0..<frames).map { Int16(truncatingIfNeeded: $0 % 1000) }
+        samples.withUnsafeBufferPointer { buffer.append($0.baseAddress!, count: $0.count) }
+    }
+
+    func testDurationTracksTheSamplesCaptured() {
+        let buffer = PCMBuffer()
+        XCTAssertEqual(buffer.duration, 0)
+
+        append(buffer, frames: PCMBuffer.sampleRate)          // one second
+        XCTAssertEqual(buffer.duration, 1, accuracy: 0.001)
+
+        append(buffer, frames: PCMBuffer.sampleRate / 2)
+        XCTAssertEqual(buffer.duration, 1.5, accuracy: 0.001)
+    }
+
+    func testStartingAFreshRecordingClearsIt() {
+        let buffer = PCMBuffer()
+        append(buffer, frames: 8_000)
+        buffer.removeAll()
+        XCTAssertEqual(buffer.count, 0)
+        XCTAssertFalse(buffer.writeWAV(to: directory.appendingPathComponent("empty.wav")))
+    }
+
+    func testTheWAVItWritesIsReadableAudio() throws {
+        // The live pass hands this file to whisper, so it has to be a real
+        // WAV — not merely bytes on disk.
+        let buffer = PCMBuffer()
+        append(buffer, frames: 16_000)
+
+        let url = directory.appendingPathComponent("live.wav")
+        XCTAssertTrue(buffer.writeWAV(to: url))
+
+        let file = try AVAudioFile(forReading: url)
+        XCTAssertEqual(file.fileFormat.sampleRate, Double(PCMBuffer.sampleRate))
+        XCTAssertEqual(file.fileFormat.channelCount, 1)
+        XCTAssertEqual(file.length, 16_000)
+    }
+
+    func testTheWAVGrowsAsSpeechContinues() throws {
+        // Each live pass must see more audio than the last.
+        let buffer = PCMBuffer()
+        let url = directory.appendingPathComponent("growing.wav")
+
+        append(buffer, frames: 8_000)
+        buffer.writeWAV(to: url)
+        let first = try AVAudioFile(forReading: url).length
+
+        append(buffer, frames: 8_000)
+        buffer.writeWAV(to: url)
+        let second = try AVAudioFile(forReading: url).length
+
+        XCTAssertEqual(first, 8_000)
+        XCTAssertEqual(second, 16_000)
+    }
+
+    func testHeaderDeclaresTheRightLength() {
+        let header = PCMBuffer.header(frameCount: 1_000)
+        XCTAssertEqual(header.count, 44)
+        XCTAssertEqual(String(decoding: header[0..<4], as: UTF8.self), "RIFF")
+        XCTAssertEqual(String(decoding: header[8..<12], as: UTF8.self), "WAVE")
+        let dataSize = header[40..<44].withUnsafeBytes { $0.load(as: UInt32.self).littleEndian }
+        XCTAssertEqual(dataSize, 2_000, "1000 frames of 16-bit mono is 2000 bytes")
+    }
+}
+
+extension PCMBufferTests {
+    func testLivePassesOnlyReadTheRecentWindow() throws {
+        // A long dictation must not make each pass longer than the last.
+        let buffer = PCMBuffer()
+        var samples = [Int16](repeating: 1, count: PCMBuffer.sampleRate * 60)
+        samples.withUnsafeBufferPointer { buffer.append($0.baseAddress!, count: $0.count) }
+        XCTAssertEqual(buffer.duration, 60, accuracy: 0.01)
+
+        let url = directory.appendingPathComponent("window.wav")
+        XCTAssertTrue(buffer.writeWAV(to: url, maxSeconds: 24))
+
+        let file = try AVAudioFile(forReading: url)
+        XCTAssertEqual(file.length, Int64(PCMBuffer.sampleRate * 24))
+    }
+
+    func testAShortRecordingIsWrittenWhole() throws {
+        let buffer = PCMBuffer()
+        var samples = [Int16](repeating: 1, count: PCMBuffer.sampleRate * 3)
+        samples.withUnsafeBufferPointer { buffer.append($0.baseAddress!, count: $0.count) }
+
+        let url = directory.appendingPathComponent("short.wav")
+        buffer.writeWAV(to: url, maxSeconds: 24)
+        XCTAssertEqual(try AVAudioFile(forReading: url).length, Int64(PCMBuffer.sampleRate * 3))
+    }
+}
+
+final class SilenceDetectorTests: XCTestCase {
+    private let start = Date(timeIntervalSinceReferenceDate: 800_000_000)
+
+    func testSilenceBeforeYouSpeakNeverEndsTheRecording() {
+        // Opening dictation and pausing to gather your thoughts must not be
+        // read as having finished.
+        var detector = SilenceDetector()
+        detector.observe(level: 0.01, at: start)
+        XCTAssertFalse(detector.hasHeardVoice)
+        XCTAssertFalse(detector.hasFallenSilent(at: start.addingTimeInterval(30)))
+    }
+
+    func testItEndsAfterTheTimeoutOnceYouHaveSpoken() {
+        var detector = SilenceDetector()
+        detector.observe(level: 0.8, at: start)
+        XCTAssertTrue(detector.hasHeardVoice)
+
+        XCTAssertFalse(detector.hasFallenSilent(at: start.addingTimeInterval(1.0)))
+        XCTAssertFalse(
+            detector.hasFallenSilent(at: start.addingTimeInterval(SilenceDetector.defaultTimeout - 0.1)))
+        XCTAssertTrue(
+            detector.hasFallenSilent(at: start.addingTimeInterval(SilenceDetector.defaultTimeout)))
+    }
+
+    func testAPauseMidSentenceDoesNotEndIt() {
+        // Speak, breathe for a second and a half, speak again: the clock
+        // restarts, so the take survives.
+        var detector = SilenceDetector()
+        detector.observe(level: 0.7, at: start)
+        detector.observe(level: 0.02, at: start.addingTimeInterval(1.5))
+        detector.observe(level: 0.7, at: start.addingTimeInterval(1.6))
+
+        XCTAssertFalse(detector.hasFallenSilent(at: start.addingTimeInterval(3.0)))
+        XCTAssertTrue(detector.hasFallenSilent(at: start.addingTimeInterval(3.9)))
+    }
+
+    func testRoomToneCountsAsSilence() {
+        // Measured room tone sits below 0.05 on the level curve.
+        var detector = SilenceDetector()
+        detector.observe(level: 0.9, at: start)
+        for step in 1...20 {
+            detector.observe(level: 0.04, at: start.addingTimeInterval(Double(step) * 0.2))
+        }
+        XCTAssertTrue(detector.hasFallenSilent(at: start.addingTimeInterval(4)))
+    }
+
+    func testResetForgetsThePreviousTake() {
+        var detector = SilenceDetector()
+        detector.observe(level: 0.9, at: start)
+        detector.reset()
+        XCTAssertFalse(detector.hasHeardVoice)
+        XCTAssertFalse(detector.hasFallenSilent(at: start.addingTimeInterval(60)))
     }
 }

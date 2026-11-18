@@ -14,6 +14,11 @@ final class SearchEngine: ObservableObject {
         case clipboard
         case dictation
 
+        /// Clipboard history and recordings are chronological browsers, not
+        /// ranked search: the newest entry belongs at the top whether or not
+        /// you have ever pasted it.
+        var isHistoryBrowser: Bool { self != .applications }
+
         var placeholder: String {
             switch self {
             case .applications: return "Search applications…"
@@ -77,6 +82,7 @@ final class SearchEngine: ObservableObject {
     private let usage: UsageStore
     private let applicationProvider = ApplicationProvider()
     private var searchTask: Task<Void, Never>?
+    private var applicationWatcher: DirectoryWatcher?
 
     init(usage: UsageStore = .shared) {
         self.usage = usage
@@ -89,10 +95,22 @@ final class SearchEngine: ObservableObject {
 
     func prepare() async {
         await applicationProvider.prepare()
+        watchApplicationDirectories()
         // The index lands a beat after launch; refresh whatever is on screen.
         // Empty queries included — that is the predicted zero state, which has
         // nothing to show until the index exists.
         search(query)
+    }
+
+    /// Picks up apps installed, renamed or deleted while Omnicast is running,
+    /// so the list is never stale until the next restart.
+    private func watchApplicationDirectories() {
+        guard applicationWatcher == nil else { return }
+        let watcher = DirectoryWatcher(paths: ApplicationProvider.watchablePaths) {
+            Task { @MainActor [weak self] in self?.reindexApplications() }
+        }
+        watcher.start()
+        applicationWatcher = watcher
     }
 
     func reindexApplications() {
@@ -124,11 +142,16 @@ final class SearchEngine: ObservableObject {
                 for await items in group {
                     guard !Task.isCancelled else { return }
                     merged.append(contentsOf: items)
-                    self.publish(self.rank(merged, query: text), for: text)
                 }
             }
 
             guard !Task.isCancelled else { return }
+            // One publish per query, not one per provider. Publishing as each
+            // provider returned made sense when the slow system file index was
+            // among them; now they are all in memory or a quick SQLite read,
+            // and the extra renders only produced overlapping animations when
+            // typing quickly.
+            self.publish(self.rank(merged, query: text), for: text)
             self.isSearching = false
         }
     }
@@ -198,20 +221,50 @@ final class SearchEngine: ObservableObject {
         query.isEmpty && mode.isBrowser
     }
 
+    /// What an empty launcher offers: the handful of applications you open
+    /// most, then the two browsers in a fixed order so muscle memory holds.
+    static let quickLaunchApplications = 6
+
+    nonisolated static func quickLaunch(from ranked: [SearchItem]) -> [SearchItem] {
+        let applications = ranked
+            .filter { $0.kind == .application }
+            .prefix(quickLaunchApplications)
+        let panes: [SearchItem] = [Mode.clipboard, Mode.dictation].compactMap { mode in
+            ranked.first { $0.action == .openPane(mode) }
+        }
+        return Array(applications) + panes
+    }
+
     private func rank(_ items: [SearchItem], query: String) -> [SearchItem] {
         // One snapshot per keystroke rather than a lookup per candidate.
         let memory = usage.memory(for: query)
-        let isPrediction = Self.predicts(query: query, mode: mode)
+        return Self.rank(
+            items,
+            // In a history browser the providers have already put the list in
+            // the order the user expects — newest first. Letting frecency
+            // reorder it floats whatever you happened to paste before above
+            // what you said a minute ago, which reads as a broken sort rather
+            // than as learning.
+            boost: mode.isHistoryBrowser ? { _ in 0 } : { memory.boost(for: $0) },
+            isPrediction: Self.predicts(query: query, mode: mode))
+    }
 
+    /// Scores and orders one round of candidates.
+    ///
+    /// Free of the engine's state so the ordering can be checked directly.
+    nonisolated static func rank(
+        _ items: [SearchItem], boost: (String) -> Double, isPrediction: Bool
+    ) -> [SearchItem] {
         var seen = Set<String>()
         var ranked: [SearchItem] = []
         ranked.reserveCapacity(items.count)
 
         for var item in items where seen.insert(item.id).inserted {
-            let learned = memory.boost(for: item.id)
+            let learned = boost(item.id)
             // With nothing typed the list is pure prediction, so it only holds
             // things you have actually opened.
-            if isPrediction && learned <= 0 { continue }
+            // The two browsers are always on the quick-launch row, used or not.
+            if isPrediction, learned <= 0, !item.isLauncherPane { continue }
             item.base = item.score * item.weight
             item.score = item.base + learned
             ranked.append(item)
@@ -219,7 +272,7 @@ final class SearchEngine: ObservableObject {
         ranked.sort { lhs, rhs in
             lhs.score == rhs.score ? lhs.title < rhs.title : lhs.score > rhs.score
         }
-        return Array(ranked.prefix(50))
+        return isPrediction ? Self.quickLaunch(from: ranked) : Array(ranked.prefix(50))
     }
 
     private func publish(_ items: [SearchItem], for query: String) {

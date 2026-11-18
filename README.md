@@ -192,7 +192,7 @@ A menu-bar app shows nothing at launch, which makes it awkward to test against. 
 | Flag | |
 |---|---|
 | `--show-launcher[=query\|clipboard\|recordings]` | Open the launcher, optionally inside a browser |
-| `--show-window[=models\|clipboard\|settings]` | Open the main window on a tab |
+| `--show-window[=models\|settings]` | Open the main window on a tab |
 | `--show-droplet[=recording:0.4]` | Preview the dictation indicator at a given voice level |
 | `--dump-results[=query]` | Print the ranked list with fuzzy and learned scores |
 | `--dictation-status` | Report which engine and model would actually run |

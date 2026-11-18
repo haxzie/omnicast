@@ -7,9 +7,15 @@ let package = Package(
     products: [
         .executable(name: "Omnicast", targets: ["Omnicast"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/Jakubantalik/Libraries.dev", branch: "main")
+    ],
     targets: [
         .executableTarget(
             name: "Omnicast",
+            dependencies: [
+                .product(name: "VoiceGlowKit", package: "Libraries.dev")
+            ],
             path: "Sources/Omnicast",
             // Compiled into Contents/Resources/default.metallib by
             // scripts/build.sh; SwiftPM does not build Metal sources itself.

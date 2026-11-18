@@ -24,10 +24,10 @@ struct MenuBarContent: View {
     @EnvironmentObject private var environment: AppEnvironment
 
     var body: some View {
-        Button("Open Launcher") { environment.showLauncher(mode: .applications) }
+        Button("Open Launcher") { environment.showLauncherFromMenu(mode: .applications) }
             .keyboardShortcut(.space, modifiers: .option)
 
-        Button("Clipboard History") { environment.showLauncher(mode: .clipboard) }
+        Button("Clipboard History") { environment.showLauncherFromMenu(mode: .clipboard) }
 
         Button(environment.dictation.isRecording ? "Stop Dictation" : "Start Dictation") {
             environment.dictation.toggle()
@@ -63,6 +63,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Menu-bar app: no Dock icon until a window is opened.
         NSApp.setActivationPolicy(.accessory)
+        // Every surface is built from white-on-dark overlays — selection
+        // fills, badges, hairlines — so the app owns its appearance rather
+        // than following the system into a light theme it was never drawn for.
+        NSApp.appearance = NSAppearance(named: .darkAqua)
         MainActor.assumeIsolated {
             AppEnvironment.shared.bootstrap()
             handleLaunchArguments()
@@ -71,7 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Debug affordances for a menu-bar app that otherwise shows no UI at
     /// launch: `Omnicast --show-window[=models]`, `--show-launcher[=query]` and
-    /// `--show-droplet[=recording|transcribing|done]`, which drives the
+    /// `--show-hud[=recording|transcribing|done]`, which drives the
     /// dictation droplet with synthetic levels so it can be inspected without
     /// a microphone. `--replay-learning` scores the ranker against the pick
     /// log and prints the lift over fuzzy matching alone, and
@@ -125,22 +129,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let argument = arguments.first(where: { $0.hasPrefix("--show-window") }) {
             let name = argument.split(separator: "=").last.map(String.init) ?? ""
             AppEnvironment.shared.openMainWindow(
-                tab: MainWindowTab(rawValue: name) ?? .dictation)
+                tab: MainWindowTab(rawValue: name) ?? .settings)
         }
-        if let argument = arguments.first(where: { $0.hasPrefix("--show-droplet") }) {
+        if let argument = arguments.first(where: { $0.hasPrefix("--show-hud") }) {
             let value = argument.split(separator: "=").last.map(String.init) ?? "recording"
             // "recording:0.25" previews a specific voice level.
             let parts = value.split(separator: ":")
             let name = parts.first.map(String.init) ?? "recording"
             let level = parts.count > 1 ? Double(parts[1]) ?? 0.65 : 0.65
-            let phase: DropletPhase =
+            let phase: DictationHUDPhase =
                 switch name {
                 case "transcribing": .transcribing
-                case "done": .done
                 case "failed": .failed("whisper.cpp was not found.")
                 default: .recording
                 }
-            AppEnvironment.shared.previewDroplet(phase, level: level)
+            // Long enough to run past three lines, so the fade is visible.
+            let sample =
+                "This is what the live transcript looks like while you are still talking, "
+                + "running on past three lines so the older words dissolve away at the top "
+                + "instead of the panel growing to fit them."
+            AppEnvironment.shared.previewHUD(
+                phase, level: level, text: phase == .recording ? sample : "")
         }
         if let argument = arguments.first(where: { $0.hasPrefix("--show-launcher") }) {
             let query = argument.split(separator: "=").dropFirst().joined(separator: "=")
@@ -160,7 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         MainActor.assumeIsolated {
-            AppEnvironment.shared.openMainWindow(tab: .dictation)
+            AppEnvironment.shared.openMainWindow(tab: .settings)
         }
         return true
     }

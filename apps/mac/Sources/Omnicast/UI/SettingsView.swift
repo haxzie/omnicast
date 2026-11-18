@@ -63,8 +63,13 @@ struct SettingsView: View {
                         Text("90 days").tag(90)
                         Text("Forever").tag(36_500)
                     }
-                    Text("Items copied from password managers are never recorded.")
+                    Text("Items copied from password managers are never recorded. Browse your history from the launcher with \(settings.clipboardShortcut.displayString).")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
+                    HStack {
+                        Text("Clipboard history")
+                        Spacer()
+                        Button("Clear unpinned") { ClipboardStore.shared.deleteAll() }
+                    }
                 }
 
                 section("Dictation") {
@@ -85,6 +90,20 @@ struct SettingsView: View {
                     }
                     Toggle("Paste transcript at the cursor", isOn: $settings.autoPasteDictation)
                     Toggle("Play start and stop sounds", isOn: $settings.playDictationSounds)
+                    Toggle("Finish automatically when you stop talking", isOn: $settings.autoStopOnSilence)
+                    Text(
+                        "Ends the recording after about \(String(format: "%.1f", SilenceDetector.defaultTimeout)) seconds of silence, once you have said something."
+                    )
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Recordings")
+                            Text("Browse transcripts from the launcher — type \u{201C}recordings\u{201D}.")
+                                .font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Clear") { environment.dictation.clearHistory() }
+                    }
                     permissionRow
                 }
 

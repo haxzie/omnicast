@@ -36,6 +36,21 @@ Points worth knowing before changing things:
   `objectWillChange` into its own publisher; views that observe only the environment depend on it.
 - **The launcher's text field binds straight to `SearchEngine.query`** — do not reintroduce a
   separate `@State` copy, it drifts.
+- **The launcher's SwiftUI view appears exactly once.** The panel is built on first use and reused
+  for every open after that, so `onAppear` puts the caret in the field the first time and never
+  again — which is why focus would sometimes be missing on a later open. `AppEnvironment` bumps a
+  counter on every presentation and the view re-focuses from that, plus from the panel becoming
+  key. Focus also has to be set a run-loop turn *after* `present()`, because the window is not key
+  yet when it returns.
+- **Clicking away closes the launcher**, via `windowDidResignKey`. Two guards make that safe: the
+  check is deferred a quarter second, because key status flickers while the app is still
+  activating, and it only fires if the panel actually held focus during this presentation — a panel
+  that never managed to take key would otherwise read as "clicked away" and vanish the instant it
+  appeared.
+- **Taking key can fail mid-activation.** Dismissing and re-opening inside the same run-loop turn
+  (toggling the hot key twice quickly) reliably left the panel on screen, with a caret, while
+  typing went to the app behind it. `present()` re-asserts key a few times over ~120 ms, then stops
+  — long enough to win the race, short enough not to fight a user who deliberately clicked away.
 - **Backspace cannot be caught with `onKeyPress`.** It is text input, so a focused `TextField`
   consumes it before any key-press modifier runs — the browsers' "delete past the start to go
   back" gesture needs a local `NSEvent` monitor, guarded on the launcher being the key window so a
